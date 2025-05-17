@@ -1,6 +1,5 @@
 {
-    "token": "MTM1MjY0NTYwMjY1MTAxMzE0MA.GTfaTO.2QaCIXbpBvLyevlYbD1zLQz-gfMz7RT8ngby9M",
-    "default_prefix": "!",
-    "owner_ids": [1112710796229742652],
-    "description": "A Discord bot with trigger commands"
+  "token": "xxxxxx",
+  "prefix": "!",
+  "owner_id": ["1112710796229742652"]
 }
