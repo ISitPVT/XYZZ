@@ -487,29 +487,36 @@ class TriggerCommands(commands.Cog):
         if message.author.bot:
             return  # Ignore bot messages
         
-        # Get the message content
+        # Get the message content and strip whitespace
         content = message.content.strip().lower()
         
-        # Check if the content matches any trigger
-        trigger_data = self.db.get_trigger(content)
+        # Get all triggers for case-insensitive matching
+        all_triggers = self.db.get_all_triggers()
         
-        # If trigger exists, respond with the content
+        # Check if the content matches any trigger name (case-insensitive)
+        trigger_data = None
+        for trigger_name, data in all_triggers.items():
+            if content.lower() == trigger_name.lower():
+                trigger_data = data
+                break
+        
+        # If trigger exists, respond with only the content
         if trigger_data:
-            response = ""
-            if trigger_data.get('content'):
-                response = trigger_data['content']
-            
             # Send response text if there is any
-            if response:
-                await message.channel.send(response)
+            if trigger_data.get('content'):
+                await message.channel.send(trigger_data['content'])
             
             # Send attachment if there is one
             if trigger_data.get('attachment_url'):
-                # For files, just send the URL as an embed with no text
-                embed = discord.Embed()
-                embed.set_image(url=trigger_data['attachment_url'])
-                await message.channel.send(embed=embed)
-
+                # For files, just send the URL directly or as an embed with no text
+                if trigger_data.get('content'):
+                    # If we already sent content, use an embed for the image
+                    embed = discord.Embed()
+                    embed.set_image(url=trigger_data['attachment_url'])
+                    await message.channel.send(embed=embed)
+                else:
+                    # If no content, just send the image directly
+                    await message.channel.send(trigger_data['attachment_url'])
 
 async def setup(bot):
     await bot.add_cog(TriggerCommands(bot))
