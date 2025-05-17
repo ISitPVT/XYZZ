@@ -37,6 +37,13 @@ class TriggerBot(commands.Bot):
         self.config = self.load_config()
         self.default_prefix = self.config.get('prefix', '!')
         self.owner_id = self.config.get('owner_id')
+        
+        # Handle list of owner IDs if provided as list
+        if isinstance(self.owner_id, list) and len(self.owner_id) > 0:
+            self.owner_id = int(self.owner_id[0])
+        elif isinstance(self.owner_id, str):
+            self.owner_id = int(self.owner_id)
+        
         self.prefixes: Dict[str, str] = {}
         self.db_manager = DatabaseManager()
         
@@ -105,6 +112,7 @@ class TriggerBot(commands.Bot):
         """Event that triggers when the bot is ready"""
         logger.info(f'Logged in as {self.user.name} (ID: {self.user.id})')
         logger.info(f'Using discord.py version {discord.__version__}')
+        logger.info(f'Owner ID: {self.owner_id}')
         
         # Set bot activity
         await self.change_presence(activity=discord.Activity(
@@ -128,6 +136,7 @@ class TriggerBot(commands.Bot):
     async def on_command_error(self, ctx, error):
         """Global error handler for commands"""
         if isinstance(error, commands.CommandNotFound):
+            logger.debug(f"Command not found: {ctx.message.content}")
             return  # Ignore command not found errors
         
         if isinstance(error, commands.MissingRequiredArgument):
@@ -145,7 +154,14 @@ class TriggerBot(commands.Bot):
         # Log other errors
         logger.error(f"Command error in {ctx.command}: {str(error)}")
         await ctx.send(f"An error occurred: {str(error)}")
-
+    
+    async def on_message(self, message):
+        # Process commands first
+        await self.process_commands(message)
+        
+        # We need to check if this is a trigger after processing commands
+        # to avoid executing bot commands inadvertently
+        # This will be handled by the TriggerCommands cog's listener
 async def main():
     # Create bot instance
     bot = TriggerBot()
