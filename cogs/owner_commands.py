@@ -1,549 +1,313 @@
 import discord
 from discord.ext import commands
 from discord import app_commands
-import sys
-import asyncio
-import os
-from typing import Optional, Literal, List
-import traceback
-import time
-import platform
-import psutil
-import json
+import logging
+from typing import Optional, Dict, List, Any
+
+logger = logging.getLogger('owner_commands')
+
+class HelpPageView(discord.ui.View):
+    """Pagination view for help command"""
+    
+    def __init__(self, pages: List[discord.Embed], author_id: int):
+        super().__init__(timeout=60)
+        self.pages = pages
+        self.author_id = author_id
+        self.current_page = 0
+        self.total_pages = len(pages)
+
+    @discord.ui.button(label="◀️", style=discord.ButtonStyle.primary)
+    async def previous_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("You cannot control this pagination.", ephemeral=True)
+            return
+
+        self.current_page = (self.current_page - 1) % self.total_pages
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
+    @discord.ui.button(label="➡️", style=discord.ButtonStyle.primary)
+    async def next_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        if interaction.user.id != self.author_id:
+            await interaction.response.send_message("You cannot control this pagination.", ephemeral=True)
+            return
+
+        self.current_page = (self.current_page + 1) % self.total_pages
+        await interaction.response.edit_message(embed=self.pages[self.current_page], view=self)
+
 
 class OwnerCommands(commands.Cog):
+    """Commands available to server managers and the bot owner"""
+    
     def __init__(self, bot):
         self.bot = bot
     
-    async def cog_check(self, ctx):
-        """Check that ensures commands in this cog can only be used by the bot owner."""
-        return await self.bot.is_owner(ctx.author)
+    def is_owner_or_has_manage_server(self, ctx):
+        """Check if the user is the bot owner or has manage server permissions"""
+        if ctx.author.id == self.bot.owner_id:
+            return True
+        
+        # Check if in DM channel
+        if not ctx.guild:
+            return False
+            
+        # Check if user has manage server permissions
+        return ctx.author.guild_permissions.manage_guild
     
-    @commands.command(name="restart", description="Restart the bot (Owner only)")
-    async def restart(self, ctx):
-        """Restart the bot (Owner only)"""
-        embed = discord.Embed(
-            title="Restarting Bot",
-            description="The bot is restarting...",
-            color=discord.Color.orange()
-        )
-        await ctx.send(embed=embed)
-        
-        # Save any data that needs to be persisted
-        self.bot.save_triggers()
-        self.bot.save_prefixes()
-        
-        # Restart the bot
-        python = sys.executable
-        os.execl(python, python, *sys.argv)
-    
-    @commands.command(name="reload", description="Reload bot commands (Owner only)")
-    @commands.is_owner()
-    async def reload(self, ctx, *, cog: Optional[str] = None):
-        """
-        Reload all cogs or a specific cog
-        
-        Parameters:
-        -----------
-        cog: Optional[str]
-            The name of the cog to reload. If not provided, all cogs will be reloaded.
-        """
-        start_time = time.time()
-        
-        if cog:
-            # Reload a specific cog
-            try:
-                await self.bot.reload_extension(f"cogs.{cog}")
-                end_time = time.time()
-                
-                embed = discord.Embed(
-                    title="Cog Reloaded",
-                    description=f"Successfully reloaded cog `{cog}`.",
-                    color=discord.Color.green()
-                )
-                embed.set_footer(text=f"Completed in {(end_time - start_time):.2f} seconds")
-                await ctx.send(embed=embed)
-            except Exception as e:
-                embed = discord.Embed(
-                    title="Error",
-                    description=f"Failed to reload cog `{cog}`:\n```python\n{str(e)}\n```",
-                    color=discord.Color.red()
-                )
-                await ctx.send(embed=embed)
+    @commands.command(name="help")
+    async def help_command(self, ctx, command: Optional[str] = None):
+        """Show help for all commands or a specific command"""
+        if command:
+            # Show help for a specific command
+            cmd = self.bot.get_command(command)
+            if not cmd:
+                await ctx.send(f"No command called `{command}` found.")
+                return
+            
+            embed = discord.Embed(
+                title=f"Help: {cmd.name}",
+                description=cmd.help or "No description available.",
+                color=discord.Color.blue()
+            )
+            
+            # Add usage information
+            usage = f"{ctx.prefix}{cmd.name}"
+            if cmd.signature:
+                usage += f" {cmd.signature}"
+            embed.add_field(name="Usage", value=f"`{usage}`", inline=False)
+            
+            # Add aliases if any
+            if cmd.aliases:
+                embed.add_field(name="Aliases", value=", ".join([f"`{alias}`" for alias in cmd.aliases]), inline=False)
+            
+            await ctx.send(embed=embed)
         else:
-            # Reload all cogs
+            # Create multiple help pages
+            pages = self.create_help_pages(ctx)
+            
+            # Send the first page with pagination
+            view = HelpPageView(pages, ctx.author.id)
+            await ctx.send(embed=pages[0], view=view)
+    
+    @app_commands.command(name="help", description="Show help for bot commands")
+    @app_commands.describe(command="Optional command name to get specific help")
+    async def slash_help_command(self, interaction: discord.Interaction, command: Optional[str] = None):
+        """Slash command to show help for all commands or a specific command"""
+        if command:
+            # Show help for a specific command
+            cmd = self.bot.get_command(command)
+            if not cmd:
+                await interaction.response.send_message(f"No command called `{command}` found.", ephemeral=True)
+                return
+            
             embed = discord.Embed(
-                title="Reloading Cogs",
-                description="Reloading all cogs...",
+                title=f"Help: {cmd.name}",
+                description=cmd.help or "No description available.",
                 color=discord.Color.blue()
             )
-            message = await ctx.send(embed=embed)
             
-            success_count = 0
-            fail_count = 0
-            failed_cogs = []
+            # Add usage information
+            prefix = self.bot.prefixes.get(str(interaction.guild_id), self.bot.default_prefix) if interaction.guild else self.bot.default_prefix
+            usage = f"{prefix}{cmd.name}"
+            if cmd.signature:
+                usage += f" {cmd.signature}"
+            embed.add_field(name="Usage", value=f"`{usage}`", inline=False)
             
-            # Reload each cog
-            for filename in os.listdir("./cogs"):
-                if filename.endswith(".py") and not filename.startswith("_"):
-                    cog_name = filename[:-3]
-                    try:
-                        await self.bot.reload_extension(f"cogs.{cog_name}")
-                        success_count += 1
-                    except Exception as e:
-                        fail_count += 1
-                        failed_cogs.append((cog_name, str(e)))
+            # Add aliases if any
+            if cmd.aliases:
+                embed.add_field(name="Aliases", value=", ".join([f"`{alias}`" for alias in cmd.aliases]), inline=False)
             
-            end_time = time.time()
+            await interaction.response.send_message(embed=embed)
+        else:
+            # Create multiple help pages
+            pages = self.create_help_pages(interaction)
             
-            # Update the embed with results
-            if fail_count == 0:
-                embed = discord.Embed(
-                    title="Cogs Reloaded",
-                    description=f"Successfully reloaded all {success_count} cogs.",
-                    color=discord.Color.green()
-                )
-            else:
-                embed = discord.Embed(
-                    title="Cogs Reloaded",
-                    description=f"Reloaded {success_count} cogs successfully, {fail_count} failed.",
-                    color=discord.Color.yellow()
-                )
-                
-                # Add details about failed cogs
-                for cog_name, error in failed_cogs:
-                    embed.add_field(
-                        name=f"Failed: {cog_name}",
-                        value=f"```python\n{error[:1000]}```",
-                        inline=False
-                    )
-            
-            embed.set_footer(text=f"Completed in {(end_time - start_time):.2f} seconds")
-            await message.edit(embed=embed)
+            # Send the first page with pagination
+            view = HelpPageView(pages, interaction.user.id)
+            await interaction.response.send_message(embed=pages[0], view=view)
     
-    @commands.command(name="sync", description="Sync slash commands (Owner only)")
-    @commands.is_owner()
-    async def sync_commands(self, ctx, target: Optional[Literal["global", "guild"]] = "guild"):
-        """
-        Sync application commands
-        
-        Parameters:
-        -----------
-        target: Optional[Literal["global", "guild"]]
-            Where to sync commands. "global" for global commands, "guild" for the current guild.
-        """
-        embed = discord.Embed(
-            title="Syncing Commands",
-            description="Syncing application commands...",
-            color=discord.Color.blue()
-        )
-        message = await ctx.send(embed=embed)
-        
-        try:
-            start_time = time.time()
-            
-            if target == "guild":
-                # Sync to the current guild
-                guild = ctx.guild
-                if not guild:
-                    embed = discord.Embed(
-                        title="Error",
-                        description="This command must be used in a guild when using 'guild' target.",
-                        color=discord.Color.red()
-                    )
-                    await message.edit(embed=embed)
-                    return
-                
-                self.bot.tree.copy_global_to(guild=guild)
-                synced = await self.bot.tree.sync(guild=guild)
-                
-                end_time = time.time()
-                
-                embed = discord.Embed(
-                    title="Commands Synced",
-                    description=f"Successfully synced {len(synced)} commands to {guild.name}",
-                    color=discord.Color.green()
-                )
-                embed.set_footer(text=f"Completed in {(end_time - start_time):.2f} seconds")
-            else:
-                # Sync globally
-                synced = await self.bot.tree.sync()
-                
-                end_time = time.time()
-                
-                embed = discord.Embed(
-                    title="Commands Synced",
-                    description=f"Successfully synced {len(synced)} global commands.",
-                    color=discord.Color.green()
-                )
-                embed.set_footer(text=f"Completed in {(end_time - start_time):.2f} seconds")
-            
-            await message.edit(embed=embed)
-        
-        except Exception as e:
-            embed = discord.Embed(
-                title="Error",
-                description=f"Failed to sync commands:\n```python\n{str(e)}\n```",
-                color=discord.Color.red()
-            )
-            await message.edit(embed=embed)
-    
-    @commands.command(name="botinfo", description="Get detailed information about the bot (Owner only)")
-    async def botinfo(self, ctx):
-        """Get detailed information about the bot"""
-        # Collect system info
-        python_version = platform.python_version()
-        discord_version = discord.__version__
-        system_info = f"{platform.system()} {platform.release()}"
-        
-        # Process info
-        process = psutil.Process()
-        memory_usage = process.memory_info().rss / 1024**2  # Convert to MB
-        cpu_usage = psutil.cpu_percent()
-        
-        # Bot info
-        uptime = time.time() - self.bot.startup_time if hasattr(self.bot, 'startup_time') else 0
-        days, remainder = divmod(int(uptime), 86400)
-        hours, remainder = divmod(remainder, 3600)
-        minutes, seconds = divmod(remainder, 60)
-        uptime_str = f"{days}d {hours}h {minutes}m {seconds}s" if uptime > 0 else "Just started"
-        
-        guild_count = len(self.bot.guilds)
-        user_count = sum(g.member_count for g in self.bot.guilds)
-        
-        # Cog info
-        loaded_cogs = [cog for cog in self.bot.cogs]
-        
-        # Create embed
-        embed = discord.Embed(
-            title=f"{self.bot.user.name} Info",
-            description="Detailed bot information and statistics",
-            color=discord.Color.blue()
-        )
-        
-        if self.bot.user.avatar:
-            embed.set_thumbnail(url=self.bot.user.avatar.url)
-            
-        # General section
-        embed.add_field(name="General", value=(
-            f"**ID:** {self.bot.user.id}\n"
-            f"**Guilds:** {guild_count}\n"
-            f"**Users:** {user_count}\n"
-            f"**Uptime:** {uptime_str}\n"
-            f"**Latency:** {round(self.bot.latency * 1000)}ms"
-        ), inline=False)
-        
-        # System section
-        embed.add_field(name="System", value=(
-            f"**Python:** {python_version}\n"
-            f"**Discord.py:** {discord_version}\n"
-            f"**OS:** {system_info}\n"
-            f"**Memory:** {memory_usage:.2f} MB\n"
-            f"**CPU:** {cpu_usage}%"
-        ), inline=False)
-        
-        # Cogs section
-        embed.add_field(name=f"Loaded Cogs ({len(loaded_cogs)})", value=(
-            ", ".join(loaded_cogs) if loaded_cogs else "None"
-        ), inline=False)
-        
-        await ctx.send(embed=embed)
-    
-    @commands.command(name="shutdown", description="Shut down the bot (Owner only)")
-    async def shutdown(self, ctx):
-        """Shut down the bot (Owner only)"""
-        embed = discord.Embed(
-            title="Shutting Down",
-            description="The bot is shutting down...",
-            color=discord.Color.red()
-        )
-        await ctx.send(embed=embed)
-        
-        # Save any data that needs to be persisted
-        self.bot.save_triggers()
-        self.bot.save_prefixes()
-        
-        # Close the bot
-        await self.bot.close()
-    
-    @commands.command(name="eval", description="Evaluate Python code (Owner only)")
-    async def eval_command(self, ctx, *, code: str):
-        """
-        Evaluate Python code (Owner only)
-        
-        Parameters:
-        -----------
-        code: str
-            The Python code to evaluate
-        """
-        # Remove code blocks if present
-        if code.startswith("```python") or code.startswith("```py"):
-            code = code.split("\n", 1)[1].rsplit("```", 1)[0]
-        elif code.startswith("```"):
-            code = code.split("\n", 1)[1].rsplit("```", 1)[0]
-        
-        # Create a local environment
-        env = {
-            'bot': self.bot,
-            'ctx': ctx,
-            'channel': ctx.channel,
-            'author': ctx.author,
-            'guild': ctx.guild,
-            'message': ctx.message,
-            'discord': discord,
-            'commands': commands
-        }
-        env.update(globals())
-        
-        # Set up the execution function
-        code_func = f"""
-async def _eval_func():
-    try:
-{chr(10).join(f"        {line}" for line in code.splitlines())}
-    except Exception as e:
-        return f"```py\\n{chr(123)}e{chr(125).__class__.__name__}: {chr(123)}e{chr(125)}\\n```"
-"""
-        
-        try:
-            # Create the _eval_func
-            exec(code_func, env)
-            # Execute the function
-            result = await env['_eval_func']()
-            
-            # Format the result
-            if result is None:
-                result = "Code executed successfully, but returned no value."
-            
-            # Send the result
-            embed = discord.Embed(
-                title="Code Evaluation",
-                color=discord.Color.green()
-            )
-            
-            # Add result field, handling long outputs
-            if isinstance(result, str) and len(result) > 1000:
-                # Truncate long results
-                embed.add_field(name="Result (truncated)", value=result[:997] + "...", inline=False)
-            else:
-                embed.add_field(name="Result", value=result, inline=False)
-            
-            await ctx.send(embed=embed)
-        
-        except Exception as e:
-            # Handle errors in executing the code
-            error_traceback = traceback.format_exc()
-            embed = discord.Embed(
-                title="Evaluation Error",
-                description=f"An error occurred while executing the code:\n```python\n{error_traceback[:1000]}\n```",
-                color=discord.Color.red()
-            )
-            await ctx.send(embed=embed)
-    
-    @commands.command(name="backup", description="Backup bot data (Owner only)")
-    async def backup(self, ctx):
-        """Backup bot data to a new directory (Owner only)"""
-        # Create backup directory with timestamp
-        timestamp = time.strftime("%Y%m%d_%H%M%S")
-        backup_dir = f"backups/backup_{timestamp}"
-        os.makedirs(backup_dir, exist_ok=True)
-        
-        try:
-            # Copy config files
-            if os.path.exists("config.json"):
-                with open("config.json", "r") as source:
-                    config_data = json.load(source)
-                    # Censor token for security
-                    if "token" in config_data:
-                        config_data["token"] = "[CENSORED]"
-                    with open(f"{backup_dir}/config.json", "w") as dest:
-                        json.dump(config_data, dest, indent=4)
-            
-            # Copy data files
-            os.makedirs(f"{backup_dir}/data", exist_ok=True)
-            data_files = ["triggers.json", "prefixes.json"]
-            for file in data_files:
-                src_path = f"data/{file}"
-                if os.path.exists(src_path):
-                    with open(src_path, "r") as source:
-                        with open(f"{backup_dir}/data/{file}", "w") as dest:
-                            dest.write(source.read())
-            
-            # Create an info file about the backup
-            guild_count = len(self.bot.guilds)
-            trigger_count = sum(len(triggers) for triggers in self.bot.triggers.values())
-            with open(f"{backup_dir}/backup_info.txt", "w") as info_file:
-                info_file.write(f"Backup created: {timestamp}\n")
-                info_file.write(f"Bot name: {self.bot.user.name}\n")
-                info_file.write(f"Bot ID: {self.bot.user.id}\n")
-                info_file.write(f"Guild count: {guild_count}\n")
-                info_file.write(f"Trigger count: {trigger_count}\n")
-            
-            embed = discord.Embed(
-                title="Backup Created",
-                description=f"Successfully created backup at `{backup_dir}`",
-                color=discord.Color.green()
-            )
-            embed.add_field(name="Statistics", value=(
-                f"Guilds: {guild_count}\n"
-                f"Triggers: {trigger_count}"
-            ))
-            await ctx.send(embed=embed)
-        
-        except Exception as e:
-            embed = discord.Embed(
-                title="Backup Error",
-                description=f"Failed to create backup:\n```python\n{str(e)}\n```",
-                color=discord.Color.red()
-            )
-            await ctx.send(embed=embed)
-    
-    @commands.command(name="guilds", description="List all guilds the bot is in (Owner only)")
-    async def list_guilds(self, ctx):
-        """List all guilds the bot is in (Owner only)"""
-        guilds = sorted(self.bot.guilds, key=lambda g: g.member_count, reverse=True)
-        
-        # Create a paginated embed
+    def create_help_pages(self, ctx_or_interaction):
+        """Create help pages for all commands"""
         pages = []
-        guilds_per_page = 10
         
-        for i in range(0, len(guilds), guilds_per_page):
-            page_guilds = guilds[i:i+guilds_per_page]
+        # Main help page
+        main_page = discord.Embed(
+            title="Trigger Bot Help",
+            description="Welcome to the Trigger Bot! Here's an overview of available commands.",
+            color=discord.Color.blue()
+        )
+        
+        # Get the appropriate prefix
+        if isinstance(ctx_or_interaction, commands.Context):
+            prefix = ctx_or_interaction.prefix
+            user = ctx_or_interaction.author
+        else:  # discord.Interaction
+            prefix = self.bot.prefixes.get(str(ctx_or_interaction.guild_id), self.bot.default_prefix) if ctx_or_interaction.guild else self.bot.default_prefix
+            user = ctx_or_interaction.user
+        
+        main_page.add_field(
+            name="Command Categories",
+            value=f"""
+            • **Trigger Commands** - Create and manage triggers
+            • **Server Commands** - Manage server-specific settings
             
+            Use `{prefix}help <command>` for more details on a command.
+            """,
+            inline=False
+        )
+        
+        main_page.set_footer(text=f"Requested by {user}")
+        pages.append(main_page)
+        
+        # Trigger commands page
+        trigger_page = discord.Embed(
+            title="Trigger Commands",
+            description="Commands to create and manage triggers",
+            color=discord.Color.green()
+        )
+        
+        trigger_page.add_field(
+            name=f"{prefix}trigger create <name> [attachment]",
+            value="Create a new trigger with an optional attachment\n(Requires: Bot Owner or Manage Server)",
+            inline=False
+        )
+        
+        trigger_page.add_field(
+            name=f"{prefix}trigger delete [name]",
+            value="Delete a trigger. If no name is provided, shows a list of triggers\n(Requires: Bot Owner)",
+            inline=False
+        )
+        
+        trigger_page.add_field(
+            name=f"{prefix}trigger get <name>",
+            value="Get information about a specific trigger",
+            inline=False
+        )
+        
+        trigger_page.add_field(
+            name=f"{prefix}trigger list",
+            value="List all triggers with pagination",
+            inline=False
+        )
+        
+        trigger_page.set_footer(text=f"Page 2 of 3 • Requested by {user}")
+        pages.append(trigger_page)
+        
+        # Server commands page
+        server_page = discord.Embed(
+            title="Server Commands",
+            description="Commands to manage server-specific settings",
+            color=discord.Color.gold()
+        )
+        
+        server_page.add_field(
+            name=f"{prefix}serverprefix",
+            value="Show the current server prefix",
+            inline=False
+        )
+        
+        server_page.add_field(
+            name=f"{prefix}serverprefix <new_prefix>",
+            value="Change the server prefix\n(Requires: Bot Owner or Manage Server)",
+            inline=False
+        )
+        
+        server_page.add_field(
+            name=f"{prefix}help",
+            value="Show this help message",
+            inline=False
+        )
+        
+        server_page.set_footer(text=f"Page 3 of 3 • Requested by {user}")
+        pages.append(server_page)
+        
+        return pages
+    
+    @commands.command(name="serverprefix")
+    async def server_prefix(self, ctx, new_prefix: Optional[str] = None):
+        """Get or set the server prefix"""
+        # If no new prefix is provided, show the current prefix
+        if new_prefix is None:
+            current_prefix = self.bot.prefixes.get(str(ctx.guild.id), self.bot.default_prefix) if ctx.guild else self.bot.default_prefix
             embed = discord.Embed(
-                title=f"Bot Guilds ({i+1}-{min(i+guilds_per_page, len(guilds))} of {len(guilds)})",
+                title="Server Prefix",
+                description=f"The current prefix for this server is: `{current_prefix}`",
                 color=discord.Color.blue()
             )
-            
-            for guild in page_guilds:
-                trigger_count = len(self.bot.triggers.get(str(guild.id), {}))
-                prefix = self.bot.server_prefixes.get(str(guild.id), self.bot.config['default_prefix'])
-                
-                embed.add_field(
-                    name=f"{guild.name} (ID: {guild.id})",
-                    value=(
-                        f"Members: {guild.member_count}\n"
-                        f"Owner: {guild.owner.name if guild.owner else 'Unknown'}\n"
-                        f"Triggers: {trigger_count}\n"
-                        f"Prefix: `{prefix}`"
-                    ),
-                    inline=False
-                )
-            
-            pages.append(embed)
-        
-        if not pages:
-            # No guilds
-            embed = discord.Embed(
-                title="Bot Guilds",
-                description="The bot is not in any guilds.",
-                color=discord.Color.orange()
-            )
             await ctx.send(embed=embed)
             return
         
-        # Send first page
-        current_page = 0
-        message = await ctx.send(embed=pages[current_page])
+        # Check if user is authorized to change the prefix
+        if not self.is_owner_or_has_manage_server(ctx):
+            await ctx.send("You don't have permission to change the server prefix. You need to be the bot owner or have 'Manage Server' permission.")
+            return
         
-        # Add navigation reactions if there's more than one page
-        if len(pages) > 1:
-            navigation_emojis = ['⬅️', '➡️']
-            for emoji in navigation_emojis:
-                await message.add_reaction(emoji)
+        # Validate prefix
+        if len(new_prefix) > 5:
+            await ctx.send("The prefix cannot be longer than 5 characters.")
+            return
+        
+        # Update the prefix
+        if ctx.guild:
+            await self.bot.update_prefix(ctx.guild.id, new_prefix)
             
-            def check(reaction, user):
-                return user == ctx.author and str(reaction.emoji) in navigation_emojis and reaction.message.id == message.id
-            
-            # Wait for reactions
-            while True:
-                try:
-                    reaction, user = await self.bot.wait_for('reaction_add', timeout=60.0, check=check)
-                    
-                    if str(reaction.emoji) == '⬅️' and current_page > 0:
-                        current_page -= 1
-                        await message.edit(embed=pages[current_page])
-                    elif str(reaction.emoji) == '➡️' and current_page < len(pages) - 1:
-                        current_page += 1
-                        await message.edit(embed=pages[current_page])
-                        
-                    # Remove the user's reaction
-                    try:
-                        await message.remove_reaction(reaction.emoji, user)
-                    except discord.errors.Forbidden:
-                        pass  # Bot doesn't have permission to remove reactions
-                
-                except asyncio.TimeoutError:
-                    # Timeout - remove all reactions
-                    try:
-                        await message.clear_reactions()
-                    except discord.errors.Forbidden:
-                        pass  # Bot doesn't have permission to clear reactions
-                    break
+            embed = discord.Embed(
+                title="Prefix Updated",
+                description=f"The server prefix has been updated to: `{new_prefix}`",
+                color=discord.Color.green()
+            )
+            await ctx.send(embed=embed)
+        else:
+            await ctx.send("You can't change the prefix in DMs.")
     
-    @commands.command(name="leave", description="Make the bot leave a guild (Owner only)")
-    async def leave_guild(self, ctx, guild_id: int = None):
-        """
-        Make the bot leave a guild
-        
-        Parameters:
-        -----------
-        guild_id: Optional[int]
-            The ID of the guild to leave. If not provided, the bot will leave the current guild.
-        """
-        if guild_id is None and ctx.guild is None:
+    @app_commands.command(name="serverprefix", description="Get or set the server prefix")
+    @app_commands.describe(new_prefix="The new prefix to set for this server")
+    async def slash_server_prefix(self, interaction: discord.Interaction, new_prefix: Optional[str] = None):
+        """Slash command to get or set the server prefix"""
+        # If no new prefix is provided, show the current prefix
+        if new_prefix is None:
+            current_prefix = self.bot.prefixes.get(str(interaction.guild_id), self.bot.default_prefix) if interaction.guild else self.bot.default_prefix
             embed = discord.Embed(
-                title="Error",
-                description="You must provide a guild ID when using this command in DMs.",
-                color=discord.Color.red()
+                title="Server Prefix",
+                description=f"The current prefix for this server is: `{current_prefix}`",
+                color=discord.Color.blue()
             )
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
             return
         
-        target_guild = self.bot.get_guild(guild_id) if guild_id else ctx.guild
-        
-        if not target_guild:
-            embed = discord.Embed(
-                title="Error",
-                description=f"Guild with ID {guild_id} not found.",
-                color=discord.Color.red()
-            )
-            await ctx.send(embed=embed)
+        # Check if user is authorized to change the prefix
+        if not (interaction.user.id == self.bot.owner_id or 
+                (interaction.guild and interaction.user.guild_permissions.manage_guild)):
+            await interaction.response.send_message("You don't have permission to change the server prefix. You need to be the bot owner or have 'Manage Server' permission.", ephemeral=True)
             return
         
-        embed = discord.Embed(
-            title="Leaving Guild",
-            description=f"Leaving guild: {target_guild.name} (ID: {target_guild.id})",
-            color=discord.Color.yellow()
-        )
-        await ctx.send(embed=embed)
+        # Validate prefix
+        if len(new_prefix) > 5:
+            await interaction.response.send_message("The prefix cannot be longer than 5 characters.", ephemeral=True)
+            return
         
-        try:
-            await target_guild.leave()
+        # Update the prefix
+        if interaction.guild:
+            await self.bot.update_prefix(interaction.guild.id, new_prefix)
             
-            # Send confirmation if we're not leaving the current guild
-            if target_guild.id != ctx.guild.id:
-                embed = discord.Embed(
-                    title="Guild Left",
-                    description=f"Successfully left guild: {target_guild.name} (ID: {target_guild.id})",
-                    color=discord.Color.green()
-                )
-                await ctx.send(embed=embed)
-        except Exception as e:
             embed = discord.Embed(
-                title="Error",
-                description=f"Failed to leave guild:\n```python\n{str(e)}\n```",
-                color=discord.Color.red()
+                title="Prefix Updated",
+                description=f"The server prefix has been updated to: `{new_prefix}`",
+                color=discord.Color.green()
             )
-            await ctx.send(embed=embed)
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.send_message("You can't change the prefix in DMs.", ephemeral=True)
 
 
 async def setup(bot):
-    # Add startup time to the bot if it doesn't exist yet
-    if not hasattr(bot, 'startup_time'):
-        bot.startup_time = time.time()
-    
-    # Make sure backups directory exists
-    os.makedirs("backups", exist_ok=True)
-    
-    # Add the cog to the bot
     await bot.add_cog(OwnerCommands(bot))
+    # Register app commands
+    owner_cog = bot.get_cog("OwnerCommands")
+    
+    # Add help command
+    bot.tree.add_command(owner_cog.slash_help_command)
+    
+    # Add serverprefix command
+    bot.tree.add_command(owner_cog.slash_server_prefix)
+    
+    await bot.tree.sync()
