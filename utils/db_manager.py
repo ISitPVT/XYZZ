@@ -1,144 +1,180 @@
 import json
 import os
 import logging
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Union
 
-logger = logging.getLogger('TriggerBot.DBManager')
+logger = logging.getLogger('db_manager')
 
 class DatabaseManager:
-    """A simple JSON-based database manager for the bot."""
+    """Manages the database for the trigger bot"""
     
-    def __init__(self, bot):
-        self.bot = bot
-        self.data_dir = 'data'
+    def __init__(self, trigger_path: str = 'data/triggers.json', prefix_path: str = 'data/prefixes.json'):
+        self.trigger_path = trigger_path
+        self.prefix_path = prefix_path
         
-        # Create data directory if it doesn't exist
-        os.makedirs(self.data_dir, exist_ok=True)
+        # Ensure the directories and files exist
+        self._initialize_data_files()
     
-    async def get_triggers(self, guild_id: str) -> Dict[str, Any]:
-        """
-        Get all triggers for a guild
+    def _initialize_data_files(self):
+        """Initialize necessary data files and directories"""
+        # Create directories if they don't exist
+        os.makedirs('data', exist_ok=True)
         
-        Parameters:
-        -----------
-        guild_id: str
-            The ID of the guild
-            
-        Returns:
-        --------
-        Dict[str, Any]
-            A dictionary of triggers
-        """
-        if guild_id in self.bot.triggers:
-            return self.bot.triggers[guild_id]
-        return {}
+        # Initialize triggers.json if it doesn't exist
+        if not os.path.exists(self.trigger_path):
+            with open(self.trigger_path, 'w') as f:
+                json.dump({}, f, indent=2)
+                logger.info(f"Created empty {self.trigger_path} file")
+        
+        # Initialize prefixes.json if it doesn't exist
+        if not os.path.exists(self.prefix_path):
+            with open(self.prefix_path, 'w') as f:
+                json.dump({}, f, indent=2)
+                logger.info(f"Created empty {self.prefix_path} file")
     
-    async def add_trigger(self, guild_id: str, name: str, response: str, creator_id: int) -> bool:
-        """
-        Add a new trigger
-        
-        Parameters:
-        -----------
-        guild_id: str
-            The ID of the guild
-        name: str
-            The name of the trigger
-        response: str
-            The response text or URL
-        creator_id: int
-            The ID of the user who created the trigger
-            
-        Returns:
-        --------
-        bool
-            True if the trigger was added successfully, False otherwise
-        """
+    def _load_triggers(self) -> Dict[str, Dict[str, Any]]:
+        """Load triggers from the database"""
         try:
-            if guild_id not in self.bot.triggers:
-                self.bot.triggers[guild_id] = {}
-            
-            # Check if trigger already exists
-            if name.lower() in [t.lower() for t in self.bot.triggers[guild_id]]:
-                return False
-            
-            # Add the trigger
-            self.bot.triggers[guild_id][name] = {
-                "response": response,
-                "creator_id": creator_id,
-                "created_at": self.bot.utils.utcnow().isoformat()
-            }
-            
-            # Save triggers
-            self.bot.save_triggers()
-            return True
-        
-        except Exception as e:
-            logger.error(f"Error adding trigger: {e}")
-            return False
+            with open(self.trigger_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Error loading triggers: {str(e)}")
+            return {}
     
-    async def remove_trigger(self, guild_id: str, name: str) -> bool:
-        """
-        Remove a trigger
-        
-        Parameters:
-        -----------
-        guild_id: str
-            The ID of the guild
-        name: str
-            The name of the trigger
-            
-        Returns:
-        --------
-        bool
-            True if the trigger was removed successfully, False otherwise
-        """
+    def _save_triggers(self, triggers: Dict[str, Dict[str, Any]]) -> bool:
+        """Save triggers to the database"""
         try:
-            if guild_id in self.bot.triggers and name in self.bot.triggers[guild_id]:
-                del self.bot.triggers[guild_id][name]
-                self.bot.save_triggers()
-                return True
-            return False
-        
-        except Exception as e:
-            logger.error(f"Error removing trigger: {e}")
-            return False
-    
-    async def get_prefix(self, guild_id: str) -> str:
-        """
-        Get the prefix for a guild
-        
-        Parameters:
-        -----------
-        guild_id: str
-            The ID of the guild
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.trigger_path), exist_ok=True)
             
-        Returns:
-        --------
-        str
-            The prefix for the guild
-        """
-        return self.bot.server_prefixes.get(guild_id, self.bot.config['default_prefix'])
-    
-    async def set_prefix(self, guild_id: str, prefix: str) -> bool:
-        """
-        Set the prefix for a guild
-        
-        Parameters:
-        -----------
-        guild_id: str
-            The ID of the guild
-        prefix: str
-            The new prefix
-            
-        Returns:
-        --------
-        bool
-            True if the prefix was set successfully, False otherwise
-        """
-        try:
-            self.bot.server_prefixes[guild_id] = prefix
-            self.bot.save_prefixes()
+            with open(self.trigger_path, 'w') as f:
+                json.dump(triggers, f, indent=2)
             return True
         except Exception as e:
-            logger.error(f"Error setting prefix: {e}")
+            logger.error(f"Error saving triggers: {str(e)}")
             return False
+    
+    def _load_prefixes(self) -> Dict[str, str]:
+        """Load server prefixes from the database"""
+        try:
+            with open(self.prefix_path, 'r') as f:
+                return json.load(f)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            logger.error(f"Error loading prefixes: {str(e)}")
+            return {}
+    
+    def _save_prefixes(self, prefixes: Dict[str, str]) -> bool:
+        """Save server prefixes to the database"""
+        try:
+            # Ensure directory exists
+            os.makedirs(os.path.dirname(self.prefix_path), exist_ok=True)
+            
+            with open(self.prefix_path, 'w') as f:
+                json.dump(prefixes, f, indent=2)
+            return True
+        except Exception as e:
+            logger.error(f"Error saving prefixes: {str(e)}")
+            return False
+    
+    # ------ Trigger Management Methods ------
+    
+    def trigger_exists(self, name: str) -> bool:
+        """Check if a trigger exists"""
+        triggers = self._load_triggers()
+        return name in triggers
+    
+    def add_trigger(self, name: str, data: Dict[str, Any]) -> bool:
+        """Add a new trigger to the database"""
+        triggers = self._load_triggers()
+        
+        # Check if trigger already exists
+        if name in triggers:
+            return False
+        
+        # Add the trigger
+        triggers[name] = data
+        
+        # Save the updated triggers
+        return self._save_triggers(triggers)
+    
+    def delete_trigger(self, name: str) -> bool:
+        """Delete a trigger from the database"""
+        triggers = self._load_triggers()
+        
+        # Check if trigger exists
+        if name not in triggers:
+            return False
+        
+        # Delete the trigger
+        del triggers[name]
+        
+        # Save the updated triggers
+        return self._save_triggers(triggers)
+    
+    def update_trigger(self, name: str, data: Dict[str, Any]) -> bool:
+        """Update an existing trigger in the database"""
+        triggers = self._load_triggers()
+        
+        # Check if trigger exists
+        if name not in triggers:
+            return False
+        
+        # Update the trigger
+        triggers[name].update(data)
+        
+        # Save the updated triggers
+        return self._save_triggers(triggers)
+    
+    def get_trigger(self, name: str) -> Optional[Dict[str, Any]]:
+        """Get a specific trigger from the database"""
+        triggers = self._load_triggers()
+        return triggers.get(name)
+    
+    def get_all_triggers(self) -> Dict[str, Dict[str, Any]]:
+        """Get all triggers from the database"""
+        return self._load_triggers()
+    
+    def get_triggers_by_creator(self, creator_id: int) -> Dict[str, Dict[str, Any]]:
+        """Get all triggers created by a specific user"""
+        triggers = self._load_triggers()
+        return {name: data for name, data in triggers.items() if data.get('creator_id') == creator_id}
+    
+    def get_triggers_by_guild(self, guild_id: int) -> Dict[str, Dict[str, Any]]:
+        """Get all triggers created in a specific guild"""
+        triggers = self._load_triggers()
+        return {name: data for name, data in triggers.items() if data.get('guild_id') == guild_id}
+    
+    # ------ Server Prefix Methods ------
+    
+    def get_prefix(self, guild_id: Union[int, str], default_prefix: str = '!') -> str:
+        """Get the prefix for a specific guild"""
+        prefixes = self._load_prefixes()
+        return prefixes.get(str(guild_id), default_prefix)
+    
+    def set_prefix(self, guild_id: Union[int, str], prefix: str) -> bool:
+        """Set the prefix for a specific guild"""
+        prefixes = self._load_prefixes()
+        
+        # Update the prefix
+        prefixes[str(guild_id)] = prefix
+        
+        # Save the updated prefixes
+        return self._save_prefixes(prefixes)
+    
+    def delete_prefix(self, guild_id: Union[int, str]) -> bool:
+        """Delete the prefix for a specific guild (resets to default)"""
+        prefixes = self._load_prefixes()
+        
+        # Check if prefix exists
+        if str(guild_id) not in prefixes:
+            return False
+        
+        # Delete the prefix
+        del prefixes[str(guild_id)]
+        
+        # Save the updated prefixes
+        return self._save_prefixes(prefixes)
+    
+    def get_all_prefixes(self) -> Dict[str, str]:
+        """Get all server prefixes"""
+        return self._load_prefixes()
