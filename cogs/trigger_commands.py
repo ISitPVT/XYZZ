@@ -62,11 +62,12 @@ class TriggerView(discord.ui.View):
         for name, data in current_triggers:
             created_at = datetime.datetime.fromtimestamp(data.get('created_at', 0))
             has_attachment = "Yes" if data.get('attachment_url') else "No"
+            has_content = "Yes" if data.get('content') else "No"
             creator = data.get('creator_name', 'Unknown')
             
             embed.add_field(
                 name=name,
-                value=f"Created by: {creator}\nCreated at: {created_at.strftime('%Y-%m-%d %H:%M:%S')}\nHas attachment: {has_attachment}",
+                value=f"Created by: {creator}\nCreated at: {created_at.strftime('%Y-%m-%d %H:%M:%S')}\nHas attachment: {has_attachment}\nHas content: {has_content}",
                 inline=False
             )
         
@@ -108,8 +109,14 @@ class TriggerCommands(commands.Cog):
         await ctx.send(f"Please specify a subcommand. Use `{ctx.prefix}help trigger` for more information.")
     
     @trigger.command(name="create")
-    async def trigger_create(self, ctx, name: str, *, attachment: Optional[discord.Attachment] = None):
-        """Create a new trigger with an optional attachment"""
+    async def trigger_create(self, ctx, name: str, *, content: Optional[str] = None):
+        """Create a new trigger with optional content and attachment
+        
+        Usage:
+        - !trigger create name Your text content here
+        - !trigger create name (with attachment)
+        - !trigger create name Your text content here (with attachment)
+        """
         # Check if user is authorized (owner or has manage guild permission)
         if not self.is_owner_or_has_manage_server(ctx):
             await ctx.send("You don't have permission to create triggers. You need to be the bot owner or have 'Manage Server' permission.")
@@ -122,7 +129,8 @@ class TriggerCommands(commands.Cog):
         
         # Process attachment if provided
         attachment_url = None
-        if attachment:
+        if ctx.message.attachments:
+            attachment = ctx.message.attachments[0]
             try:
                 # Download attachment
                 attachment_bytes = await attachment.read()
@@ -142,7 +150,8 @@ class TriggerCommands(commands.Cog):
             "creator_name": str(ctx.author),
             "created_at": datetime.datetime.now().timestamp(),
             "guild_id": ctx.guild.id if ctx.guild else None,
-            "attachment_url": attachment_url
+            "attachment_url": attachment_url,
+            "content": content
         }
         
         # Save trigger to database
@@ -156,17 +165,19 @@ class TriggerCommands(commands.Cog):
             )
             embed.add_field(name="Created by", value=str(ctx.author))
             embed.add_field(name="Has attachment", value="Yes" if attachment_url else "No")
+            embed.add_field(name="Has content", value="Yes" if content else "No")
             
             await ctx.send(embed=embed)
         else:
             await ctx.send("Error creating trigger. Please try again later.")
     
-    @app_commands.command(name="create", description="Create a new trigger with an optional attachment")
+    @app_commands.command(name="create", description="Create a new trigger with optional content and attachment")
     @app_commands.describe(
         name="The name of the trigger to create",
+        content="Text content for the trigger",
         attachment="Optional attachment for the trigger"
     )
-    async def slash_trigger_create(self, interaction: discord.Interaction, name: str, attachment: Optional[discord.Attachment] = None):
+    async def slash_trigger_create(self, interaction: discord.Interaction, name: str, content: Optional[str] = None, attachment: Optional[discord.Attachment] = None):
         """Slash command to create a new trigger"""
         # Check if user is authorized (owner or has manage guild permission)
         if not (interaction.user.id == self.bot.owner_id or 
@@ -198,7 +209,8 @@ class TriggerCommands(commands.Cog):
             "creator_name": str(interaction.user),
             "created_at": datetime.datetime.now().timestamp(),
             "guild_id": interaction.guild.id if interaction.guild else None,
-            "attachment_url": attachment_url
+            "attachment_url": attachment_url,
+            "content": content
         }
         
         # Save trigger to database
@@ -212,6 +224,7 @@ class TriggerCommands(commands.Cog):
             )
             embed.add_field(name="Created by", value=str(interaction.user))
             embed.add_field(name="Has attachment", value="Yes" if attachment_url else "No")
+            embed.add_field(name="Has content", value="Yes" if content else "No")
             
             await interaction.response.send_message(embed=embed)
         else:
@@ -313,6 +326,10 @@ class TriggerCommands(commands.Cog):
             guild = self.bot.get_guild(trigger_data['guild_id'])
             embed.add_field(name="Server", value=guild.name if guild else "Unknown")
         
+        # Add content information if available
+        if trigger_data.get('content'):
+            embed.add_field(name="Content", value=trigger_data['content'], inline=False)
+        
         # Add attachment information if available
         if trigger_data.get('attachment_url'):
             embed.add_field(name="Attachment", value="Yes")
@@ -353,6 +370,10 @@ class TriggerCommands(commands.Cog):
             guild = self.bot.get_guild(trigger_data['guild_id'])
             embed.add_field(name="Server", value=guild.name if guild else "Unknown")
         
+        # Add content information if available
+        if trigger_data.get('content'):
+            embed.add_field(name="Content", value=trigger_data['content'], inline=False)
+        
         # Add attachment information if available
         if trigger_data.get('attachment_url'):
             embed.add_field(name="Attachment", value="Yes")
@@ -391,6 +412,35 @@ class TriggerCommands(commands.Cog):
         view = TriggerView(triggers, interaction.user.id)
         await interaction.response.send_message(embed=view.get_current_page(), view=view)
 
+    # For handling message events and responding with trigger content
+    async def check_and_respond_to_trigger(self, message):
+        """Check if message content matches a trigger and respond if it does"""
+        if message.author.bot:
+            return  # Ignore bot messages
+        
+        # Get the message content
+        content = message.content.strip().lower()
+        
+        # Check if the content matches any trigger
+        trigger_data = self.db.get_trigger(content)
+        
+        # If trigger exists, respond with the content
+        if trigger_data:
+            response = ""
+            if trigger_data.get('content'):
+                response = trigger_data['content']
+            
+            # Send response text if there is any
+            if response:
+                await message.channel.send(response)
+            
+            # Send attachment if there is one
+            if trigger_data.get('attachment_url'):
+                # For files, just send the URL as an embed with no text
+                embed = discord.Embed()
+                embed.set_image(url=trigger_data['attachment_url'])
+                await message.channel.send(embed=embed)
+
 
 async def setup(bot):
     await bot.add_cog(TriggerCommands(bot))
@@ -405,3 +455,6 @@ async def setup(bot):
     
     bot.tree.add_command(trigger_group)
     await bot.tree.sync()
+    
+    # Add message listener to the bot
+    bot.add_listener(trigger_cog.check_and_respond_to_trigger, "on_message")
