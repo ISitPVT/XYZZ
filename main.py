@@ -1,264 +1,173 @@
+#!/usr/bin/env python3
 
+import os
+import json
 import discord
 from discord.ext import commands
 import asyncio
-import json
-import os
 import logging
-import datetime
-from typing import Dict, List, Optional, Union
+import sys
+from typing import Optional, Dict, List, Any
+from utils.db_manager import DatabaseManager
+import utils
 
-# Setup logging
+# Set up logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.StreamHandler()
-    ]
+    handlers=[logging.StreamHandler(sys.stdout)]
 )
-logger = logging.getLogger('TriggerBot')
+logger = logging.getLogger('trigger_bot')
 
-# Ensure data directory exists
-os.makedirs('data', exist_ok=True)
+# Define intents
+intents = discord.Intents.default()
+intents.message_content = True  # Needed to read message content for prefix commands
+intents.guilds = True
 
-# Load configuration
-try:
-    with open('config.json', 'r') as f:
-        config = json.load(f)
-except FileNotFoundError:
-    logger.error("Config file not found. Please create a config.json file.")
-    exit(1)
-except json.JSONDecodeError:
-    logger.error("Invalid JSON in config file.")
-    exit(1)
-
-# Initialize prefixes dictionary
-server_prefixes = {}
-try:
-    if os.path.exists('data/prefixes.json') and os.path.getsize('data/prefixes.json') > 0:
-        with open('data/prefixes.json', 'r') as f:
-            server_prefixes = json.load(f)
-    else:
-        # Create empty prefixes file if it doesn't exist or is empty
-        with open('data/prefixes.json', 'w') as f:
-            json.dump({}, f, indent=4)
-        logger.info("Created empty prefixes file")
-except Exception as e:
-    logger.error(f"Error loading prefixes: {e}")
-    server_prefixes = {}
-    # Create empty prefixes file
-    with open('data/prefixes.json', 'w') as f:
-        json.dump({}, f, indent=4)
-    logger.info("Created new empty prefixes file")
-
-
-def get_prefix(bot, message):
+async def get_prefix(bot, message):
+    """Get the prefix for the guild"""
     if not message.guild:
-        return commands.when_mentioned_or(config['default_prefix'])(bot, message)
+        return commands.when_mentioned_or(bot.default_prefix)(bot, message)
     
-    guild_id = str(message.guild.id)
-    prefix = server_prefixes.get(guild_id, config['default_prefix'])
+    prefix = bot.prefixes.get(str(message.guild.id), bot.default_prefix)
     return commands.when_mentioned_or(prefix)(bot, message)
-
 
 class TriggerBot(commands.Bot):
     def __init__(self):
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.members = True
+        self.config = self.load_config()
+        self.default_prefix = self.config.get('prefix', '!')
+        self.owner_id = self.config.get('owner_id')
+        self.prefixes: Dict[str, str] = {}
+        self.db_manager = DatabaseManager()
         
         super().__init__(
             command_prefix=get_prefix,
             intents=intents,
-            description=config.get('description', 'A Discord bot with trigger commands'),
-            case_insensitive=True
+            case_insensitive=True,
+            help_command=None  # We'll implement our own help command
         )
         
-        self.config = config
-        self.server_prefixes = server_prefixes
-        self.owner_ids = set(config.get('owner_ids', []))
+        # Initialize database files if they don't exist
+        self.initialize_data_files()
         
-        # Initialize triggers
-        self.triggers = {}
-        self.load_triggers()
-        
-        # Add utility for cogs
-        self.utils = SimpleUtils()
+        # Load prefixes
+        self.load_prefixes()
+    
+    def load_config(self) -> Dict[str, Any]:
+        """Load the bot configuration"""
+        try:
+            with open('config.json', 'r') as f:
+                return json.load(f)
+        except FileNotFoundError:
+            # Create default config if it doesn't exist
+            default_config = {
+                "token": "YOUR_BOT_TOKEN_HERE",
+                "prefix": "!",
+                "owner_id": 123456789  # Replace with your Discord ID
+            }
+            with open('config.json', 'w') as f:
+                json.dump(default_config, f, indent=2)
+            logger.info("Created default config.json file. Please edit it with your bot details.")
+            sys.exit(1)
+    
+    def initialize_data_files(self):
+        """Initialize necessary data files and directories"""
+        # Make sure directories exist
+        utils.check_directories()
+    
+    def load_prefixes(self):
+        """Load server prefixes from the database"""
+        self.prefixes = self.db_manager.get_all_prefixes()
+    
+    async def save_prefixes(self):
+        """Save server prefixes to the database"""
+        # This method is kept for backward compatibility
+        # Prefixes are now directly managed by the DatabaseManager
+        pass
+    
+    async def update_prefix(self, guild_id: int, prefix: str):
+        """Update the prefix for a guild"""
+        self.prefixes[str(guild_id)] = prefix
+        self.db_manager.set_prefix(guild_id, prefix)
     
     async def setup_hook(self):
-        """Sets up the bot's cogs and syncs commands."""
-        logger.info("Loading cogs...")
-        await self.load_cogs()
-        
-        # Wait a moment before syncing commands
-        await asyncio.sleep(1)
-        
-        logger.info("Syncing slash commands...")
-        try:
-            # Sync globally
-            synced = await self.tree.sync()
-            logger.info(f"Synced {len(synced)} command(s) globally")
-            
-            # You can also sync to specific guilds if needed
-            if 'test_guild_id' in self.config:
-                test_guild = discord.Object(id=self.config['test_guild_id'])
-                self.tree.copy_global_to(guild=test_guild)
-                guild_synced = await self.tree.sync(guild=test_guild)
-                logger.info(f"Synced {len(guild_synced)} command(s) to test guild")
-        except Exception as e:
-            logger.error(f"Failed to sync commands: {e}")
-        
-    async def load_cogs(self):
-        """Load all cogs from the cogs directory."""
-        if not os.path.exists("./cogs"):
-            os.makedirs("./cogs", exist_ok=True)
-            logger.info("Created cogs directory")
-            
-        for filename in os.listdir("./cogs"):
-            if filename.endswith(".py") and not filename.startswith("_"):
+        """Setup hook that runs before the bot starts"""
+        # Load cogs
+        for filename in os.listdir('./cogs'):
+            if filename.endswith('.py') and not filename.startswith('__'):
                 try:
-                    cog_name = f"cogs.{filename[:-3]}"
-                    await self.load_extension(cog_name)
-                    logger.info(f"Loaded cog: {filename}")
+                    await self.load_extension(f'cogs.{filename[:-3]}')
+                    logger.info(f"Loaded extension: {filename[:-3]}")
                 except Exception as e:
-                    logger.error(f"Failed to load cog {filename}: {e}")
-                    logger.error(f"Traceback: {e.__traceback__}")
-    
-    def load_triggers(self):
-        """Load triggers from the JSON file."""
-        try:
-            triggers_file = 'data/triggers.json'
-            if os.path.exists(triggers_file) and os.path.getsize(triggers_file) > 0:
-                with open(triggers_file, 'r') as f:
-                    self.triggers = json.load(f)
-                logger.info(f"Loaded triggers for {len(self.triggers)} guild(s)")
-            else:
-                self.triggers = {}
-                self.save_triggers()
-                logger.info("Created empty triggers file")
-        except json.JSONDecodeError as e:
-            logger.error(f"Error parsing triggers file: {e}")
-            self.triggers = {}
-            self.save_triggers()
-            logger.info("Created new empty triggers file due to parsing error")
-        except Exception as e:
-            logger.error(f"Error loading triggers: {e}")
-            self.triggers = {}
-    
-    def save_triggers(self):
-        """Save triggers to the JSON file."""
-        try:
-            with open('data/triggers.json', 'w') as f:
-                json.dump(self.triggers, f, indent=4)
-        except Exception as e:
-            logger.error(f"Error saving triggers: {e}")
-    
-    def save_prefixes(self):
-        """Save server prefixes to the JSON file."""
-        try:
-            with open('data/prefixes.json', 'w') as f:
-                json.dump(self.server_prefixes, f, indent=4)
-        except Exception as e:
-            logger.error(f"Error saving prefixes: {e}")
+                    logger.error(f"Failed to load extension {filename[:-3]}: {str(e)}")
     
     async def on_ready(self):
-        """Called when the bot is ready."""
-        logger.info(f"Logged in as {self.user.name} | {self.user.id}")
-        logger.info(f"Default prefix: {config['default_prefix']}")
-        await self.change_presence(
-            activity=discord.Activity(
-                type=discord.ActivityType.watching,
-                name=f"for triggers | {config['default_prefix']}help"
-            )
-        )
-    
-    async def on_message(self, message):
-        """Handle messages and check for triggers."""
-        if message.author.bot:
-            return
+        """Event that triggers when the bot is ready"""
+        logger.info(f'Logged in as {self.user.name} (ID: {self.user.id})')
+        logger.info(f'Using discord.py version {discord.__version__}')
         
-        # Process commands first
-        await self.process_commands(message)
-        
-        # Then check for triggers
-        if message.guild:
-            guild_id = str(message.guild.id)
-            if guild_id in self.triggers:
-                content = message.content.lower()
-                for trigger_name, trigger_data in self.triggers[guild_id].items():
-                    # Check if the trigger is in the message
-                    if trigger_name.lower() in content:
-                        # Send the response
-                        response = trigger_data["response"]
-                        if response.startswith("http") and any(response.endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif"]):
-                            # If it's an image URL, send it as an embed
-                            embed = discord.Embed()
-                            embed.set_image(url=response)
-                            await message.channel.send(embed=embed)
-                        else:
-                            # Otherwise send as plain text
-                            await message.channel.send(response)
-                        break
+        # Set bot activity
+        await self.change_presence(activity=discord.Activity(
+            type=discord.ActivityType.listening, 
+            name=f"{self.default_prefix}help"
+        ))
     
     async def on_guild_join(self, guild):
-        """Called when the bot joins a guild."""
-        logger.info(f"Joined guild: {guild.name} ({guild.id})")
-        
-        # Create default entry for this guild
-        guild_id = str(guild.id)
-        if guild_id not in self.server_prefixes:
-            self.server_prefixes[guild_id] = self.config['default_prefix']
-            self.save_prefixes()
-        
-        # Sync commands to this guild
-        try:
-            guild_obj = discord.Object(id=guild.id)
-            self.tree.copy_global_to(guild=guild_obj)
-            await self.tree.sync(guild=guild_obj)
-            logger.info(f"Synced commands to new guild: {guild.name}")
-        except Exception as e:
-            logger.error(f"Failed to sync commands to new guild: {e}")
-        
-    async def on_guild_remove(self, guild):
-        """Called when the bot leaves or is removed from a guild."""
-        logger.info(f"Left guild: {guild.name} ({guild.id})")
-        
-        # Clean up guild data if necessary
-        guild_id = str(guild.id)
-        if guild_id in self.triggers:
-            del self.triggers[guild_id]
-            self.save_triggers()
-            
-        if guild_id in self.server_prefixes:
-            del self.server_prefixes[guild_id]
-            self.save_prefixes()
+        """Event that triggers when the bot joins a guild"""
+        logger.info(f"Joined new guild: {guild.name} (ID: {guild.id})")
     
-    async def is_owner(self, user):
-        """Check if a user is the bot owner."""
-        if user.id in self.owner_ids:
-            return True
-        return await super().is_owner(user)
-
-
-class SimpleUtils:
-    """Utility class for cogs to use"""
-    def utcnow(self):
-        """Get the current UTC time"""
-        return datetime.datetime.utcnow()
-
+    async def on_guild_remove(self, guild):
+        """Event that triggers when the bot leaves a guild"""
+        logger.info(f"Left guild: {guild.name} (ID: {guild.id})")
+        
+        # Remove guild prefix if it exists
+        if str(guild.id) in self.prefixes:
+            self.db_manager.delete_prefix(guild.id)
+            del self.prefixes[str(guild.id)]
+    
+    async def on_command_error(self, ctx, error):
+        """Global error handler for commands"""
+        if isinstance(error, commands.CommandNotFound):
+            return  # Ignore command not found errors
+        
+        if isinstance(error, commands.MissingRequiredArgument):
+            await ctx.send(f"Missing required argument: {error.param.name}")
+            return
+        
+        if isinstance(error, commands.BadArgument):
+            await ctx.send(f"Bad argument: {str(error)}")
+            return
+        
+        if isinstance(error, commands.CheckFailure):
+            await ctx.send("You don't have permission to use this command.")
+            return
+        
+        # Log other errors
+        logger.error(f"Command error in {ctx.command}: {str(error)}")
+        await ctx.send(f"An error occurred: {str(error)}")
 
 async def main():
-    """Main entry point for the bot."""
+    # Create bot instance
     bot = TriggerBot()
-    async with bot:
-        try:
-            logger.info("Starting bot...")
-            await bot.start(config['token'])
-        except discord.LoginFailure:
-            logger.error("Invalid token. Please check your config.json file.")
-        except Exception as e:
-            logger.error(f"An error occurred while running the bot: {e}")
-
+    
+    # Get token from config
+    token = bot.config.get('token')
+    
+    if token == "YOUR_BOT_TOKEN_HERE":
+        logger.error("Please set your bot token in config.json")
+        sys.exit(1)
+    
+    try:
+        # Start the bot
+        logger.info("Starting bot...")
+        async with bot:
+            await bot.start(token)
+    except discord.errors.LoginFailure:
+        logger.error("Invalid token. Please check your token in config.json")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"Error starting bot: {str(e)}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     asyncio.run(main())
