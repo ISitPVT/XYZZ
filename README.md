@@ -68,7 +68,7 @@ discord_trigger_bot/
   - Requires: Bot Owner
 - **!trigger get [name]** - Get detailed information about a trigger
   - Available to everyone
-- ** Also Triggeres can be used directly without trigger get command , Example:{Triggger Content Can be In Both Small and Capital Letters} **
+- **Also Triggeres can be used directly without trigger get command , Example:{Triggger Content Can be In Both Small and Capital Letters}**
 - **!trigger list** - Show a paginated list of all triggers
   - Available to everyone
 
