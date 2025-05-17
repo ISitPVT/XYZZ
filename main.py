@@ -1,9 +1,11 @@
+
 import discord
 from discord.ext import commands
 import asyncio
 import json
 import os
 import logging
+import datetime
 from typing import Dict, List, Optional, Union
 
 # Setup logging
@@ -80,10 +82,16 @@ class TriggerBot(commands.Bot):
         self.triggers = {}
         self.load_triggers()
         
+        # Add utility for cogs
+        self.utils = SimpleUtils()
+    
     async def setup_hook(self):
         """Sets up the bot's cogs and syncs commands."""
         logger.info("Loading cogs...")
         await self.load_cogs()
+        
+        # Wait a moment before syncing commands
+        await asyncio.sleep(1)
         
         logger.info("Syncing slash commands...")
         try:
@@ -109,10 +117,12 @@ class TriggerBot(commands.Bot):
         for filename in os.listdir("./cogs"):
             if filename.endswith(".py") and not filename.startswith("_"):
                 try:
-                    await self.load_extension(f"cogs.{filename[:-3]}")
+                    cog_name = f"cogs.{filename[:-3]}"
+                    await self.load_extension(cog_name)
                     logger.info(f"Loaded cog: {filename}")
                 except Exception as e:
                     logger.error(f"Failed to load cog {filename}: {e}")
+                    logger.error(f"Traceback: {e.__traceback__}")
     
     def load_triggers(self):
         """Load triggers from the JSON file."""
@@ -223,11 +233,18 @@ class TriggerBot(commands.Bot):
             del self.server_prefixes[guild_id]
             self.save_prefixes()
     
-    def is_owner(self, user):
+    async def is_owner(self, user):
         """Check if a user is the bot owner."""
         if user.id in self.owner_ids:
             return True
-        return False
+        return await super().is_owner(user)
+
+
+class SimpleUtils:
+    """Utility class for cogs to use"""
+    def utcnow(self):
+        """Get the current UTC time"""
+        return datetime.datetime.utcnow()
 
 
 async def main():
