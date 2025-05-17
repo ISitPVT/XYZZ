@@ -1,3 +1,5 @@
+# Let's also fix the trigger_commands.py file to ensure slash commands work properly
+
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -47,7 +49,7 @@ class TriggerCommands(commands.Cog):
             The response text
         """
         # Check if user is owner or has manage messages permission
-        if not (self.bot.is_owner(ctx.author) or ctx.author.guild_permissions.manage_messages):
+        if not await self.bot.is_owner(ctx.author) and not ctx.author.guild_permissions.manage_messages:
             embed = discord.Embed(
                 title="Permission Denied",
                 description="You need the 'Manage Messages' permission to create triggers.",
@@ -107,6 +109,7 @@ class TriggerCommands(commands.Cog):
         )
         await ctx.send(embed=embed)
     
+    # The rest of your methods remain the same...
     @trigger.command(name="delete", description="Delete a trigger")
     @app_commands.describe(
         name="The name of the trigger to delete"
@@ -121,7 +124,7 @@ class TriggerCommands(commands.Cog):
             The name of the trigger to delete
         """
         # Check if user is owner or has manage messages permission
-        if not (self.bot.is_owner(ctx.author) or ctx.author.guild_permissions.manage_messages):
+        if not await self.bot.is_owner(ctx.author) and not ctx.author.guild_permissions.manage_messages:
             embed = discord.Embed(
                 title="Permission Denied",
                 description="You need the 'Manage Messages' permission to delete triggers.",
