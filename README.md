@@ -62,12 +62,13 @@ discord_trigger_bot/
 ## Commands
 
 ### Trigger Commands
-- **!trigger create [name] [attachment]** - Create a new trigger with optional attachment
+- **!trigger create [name] [attachment] [Text Content]** - Create a new trigger with optional attachment
   - Requires: Bot Owner or Manage Server permission
 - **!trigger delete [name]** - Delete a trigger (shows list if no name provided)
   - Requires: Bot Owner
 - **!trigger get [name]** - Get detailed information about a trigger
   - Available to everyone
+- ** Also Triggeres can be used directly without trigger get command , Example:{Triggger Content Can be In Both Small and Capital Letters} **
 - **!trigger list** - Show a paginated list of all triggers
   - Available to everyone
 
