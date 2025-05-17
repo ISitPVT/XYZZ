@@ -144,6 +144,11 @@ class TriggerCommands(commands.Cog):
                 await ctx.send(f"Error processing attachment: {str(e)}")
                 return
         
+        # Validate that at least content or attachment is provided
+        if not content and not attachment_url:
+            await ctx.send("You must provide either text content or an attachment for the trigger.")
+            return
+        
         # Create trigger data
         trigger_data = {
             "creator_id": ctx.author.id,
@@ -170,6 +175,70 @@ class TriggerCommands(commands.Cog):
             await ctx.send(embed=embed)
         else:
             await ctx.send("Error creating trigger. Please try again later.")
+    
+    @app_commands.command(name="create", description="Create a new trigger with optional content and attachment")
+    @app_commands.describe(
+        name="The name of the trigger to create",
+        content="Text content for the trigger (optional)",
+        attachment="Optional attachment for the trigger"
+    )
+    async def slash_trigger_create(self, interaction: discord.Interaction, name: str, content: Optional[str] = None, attachment: Optional[discord.Attachment] = None):
+        """Slash command to create a new trigger"""
+        # Check if user is authorized (owner or has manage guild permission)
+        if not (interaction.user.id == self.bot.owner_id or 
+                (interaction.guild and interaction.user.guild_permissions.manage_guild)):
+            await interaction.response.send_message("You don't have permission to create triggers. You need to be the bot owner or have 'Manage Server' permission.", ephemeral=True)
+            return
+        
+        # Check if trigger already exists
+        if self.db.trigger_exists(name):
+            await interaction.response.send_message(f"A trigger with the name `{name}` already exists.", ephemeral=True)
+            return
+        
+        # Process attachment if provided
+        attachment_url = None
+        if attachment:
+            try:
+                # Store the URL directly (Discord CDN URLs are persistent)
+                attachment_url = attachment.url
+                
+                logger.info(f"Attachment processed for trigger {name}: {attachment_url}")
+            except Exception as e:
+                logger.error(f"Error processing attachment: {str(e)}")
+                await interaction.response.send_message(f"Error processing attachment: {str(e)}", ephemeral=True)
+                return
+        
+        # Validate that at least content or attachment is provided
+        if not content and not attachment_url:
+            await interaction.response.send_message("You must provide either text content or an attachment for the trigger.", ephemeral=True)
+            return
+        
+        # Create trigger data
+        trigger_data = {
+            "creator_id": interaction.user.id,
+            "creator_name": str(interaction.user),
+            "created_at": datetime.datetime.now().timestamp(),
+            "guild_id": interaction.guild.id if interaction.guild else None,
+            "attachment_url": attachment_url,
+            "content": content
+        }
+        
+        # Save trigger to database
+        success = self.db.add_trigger(name, trigger_data)
+        
+        if success:
+            embed = discord.Embed(
+                title="Trigger Created",
+                description=f"Trigger `{name}` has been created successfully.",
+                color=discord.Color.green()
+            )
+            embed.add_field(name="Created by", value=str(interaction.user))
+            embed.add_field(name="Has attachment", value="Yes" if attachment_url else "No")
+            embed.add_field(name="Has content", value="Yes" if content else "No")
+            
+            await interaction.response.send_message(embed=embed)
+        else:
+            await interaction.response.send_message("Error creating trigger. Please try again later.", ephemeral=True)
     
     @app_commands.command(name="create", description="Create a new trigger with optional content and attachment")
     @app_commands.describe(
