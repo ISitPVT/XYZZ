@@ -166,8 +166,8 @@ class OwnerCommands(commands.Cog):
         )
         
         trigger_page.add_field(
-            name=f"{prefix}trigger create <name> [attachment]",
-            value="Create a new trigger with an optional attachment\n(Requires: Bot Owner or Manage Server)",
+            name=f"{prefix}trigger create <name> [content]",
+            value="Create a new trigger with optional text content and/or attachment\n(Requires: Bot Owner or Manage Server)",
             inline=False
         )
         
@@ -186,6 +186,12 @@ class OwnerCommands(commands.Cog):
         trigger_page.add_field(
             name=f"{prefix}trigger list",
             value="List all triggers with pagination",
+            inline=False
+        )
+        
+        trigger_page.add_field(
+            name="Automatic Triggering",
+            value="Just type a trigger name in any message and the bot will respond with the trigger content!",
             inline=False
         )
         
@@ -297,7 +303,6 @@ class OwnerCommands(commands.Cog):
             await interaction.response.send_message(embed=embed)
         else:
             await interaction.response.send_message("You can't change the prefix in DMs.", ephemeral=True)
-
 
 async def setup(bot):
     await bot.add_cog(OwnerCommands(bot))
