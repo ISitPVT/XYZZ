@@ -10,7 +10,24 @@ import sys
 from typing import Optional, Dict, List, Any
 from utils.db_manager import DatabaseManager
 import utils
+import time
+from colorama import init, Fore
 
+init(autoreset=True)
+
+ascii_art = f"""
+{Fore.BLUE}    ██████╗ ██████╗  █████╗  ███╗  ██╗ ██╗   ██╗
+{Fore.BLUE}    ██╔══██╗██╔══██╗██╔══██╗████╗ ██║ ██║  ██╔╝
+{Fore.CYAN}    ██████╔╝██████╔╝███████║██╔██╗██║ █████╔╝ 
+{Fore.CYAN}    ██╔═══╝ ██╔ ██═╝ ██╔══██║██║╚████║ ██╔═██╗ 
+{Fore.GREEN}   ██║      ██║  ██  ██║  ██║██║ ╚███║  ██║   ██╗
+{Fore.GREEN}   ╚═╝      ╚═╝  ╚═╝ ╚═╝  ╚═╝ ╚═╝  ╚═╝╚═╝   ╚══╝  ╚═╝   
+{Fore.GREEN}                {Fore.CYAN}『 {Fore.BLUE}Prank{Fore.CYAN} 』{Fore.RESET}
+"""
+
+for line in ascii_art.split('\n'):
+    print(line)
+    time.sleep(0.05)
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -36,13 +53,13 @@ class TriggerBot(commands.Bot):
     def __init__(self):
         self.config = self.load_config()
         self.default_prefix = self.config.get('prefix', '!')
+        self.owner_id = self.config.get('owner_id')
         
-        # Fix owner_id parsing - handle it as a simple integer
-        self.owner_id = self.parse_owner_id(self.config.get('owner_id'))
-        if self.owner_id is None:
-            logger.warning("No valid owner_id found in config, some commands will be unavailable")
-        else:
-            logger.info(f"Owner ID set to: {self.owner_id}")
+        # Handle list of owner IDs if provided as list
+        if isinstance(self.owner_id, list) and len(self.owner_id) > 0:
+            self.owner_id = int(self.owner_id[0])
+        elif isinstance(self.owner_id, str):
+            self.owner_id = int(self.owner_id)
         
         self.prefixes: Dict[str, str] = {}
         self.db_manager = DatabaseManager()
@@ -51,7 +68,7 @@ class TriggerBot(commands.Bot):
             command_prefix=get_prefix,
             intents=intents,
             case_insensitive=True,
-            help_command=None  # Disable the default help command
+            help_command=None  # We'll implement our own help command
         )
         
         # Initialize database files if they don't exist
@@ -59,23 +76,6 @@ class TriggerBot(commands.Bot):
         
         # Load prefixes
         self.load_prefixes()
-    
-    def parse_owner_id(self, owner_id_config):
-        """Parse owner ID from config with proper error handling"""
-        try:
-            # Handle different possible formats
-            if isinstance(owner_id_config, int):
-                return owner_id_config
-            elif isinstance(owner_id_config, str):
-                return int(owner_id_config)
-            elif isinstance(owner_id_config, list) and len(owner_id_config) > 0:
-                return int(owner_id_config[0])
-            else:
-                logger.error(f"Invalid owner_id format: {owner_id_config}")
-                return None
-        except (ValueError, TypeError) as e:
-            logger.error(f"Error parsing owner_id: {e}")
-            return None
     
     def load_config(self) -> Dict[str, Any]:
         """Load the bot configuration"""
@@ -87,7 +87,7 @@ class TriggerBot(commands.Bot):
             default_config = {
                 "token": "YOUR_BOT_TOKEN_HERE",
                 "prefix": "!",
-                "owner_id": 123456789  # Replace with your Discord ID
+                "owner_id": "1207080102974980136"  # Replace with your Discord ID
             }
             with open('config.json', 'w') as f:
                 json.dump(default_config, f, indent=2)
@@ -98,18 +98,6 @@ class TriggerBot(commands.Bot):
         """Initialize necessary data files and directories"""
         # Make sure directories exist
         utils.check_directories()
-        
-        # Ensure prefixes.json has valid content
-        prefix_path = 'data/prefixes.json'
-        if not os.path.exists(prefix_path) or os.path.getsize(prefix_path) == 0:
-            with open(prefix_path, 'w') as f:
-                json.dump({}, f)
-        
-        # Ensure triggers.json has valid content
-        trigger_path = 'data/triggers.json'
-        if not os.path.exists(trigger_path) or os.path.getsize(trigger_path) == 0:
-            with open(trigger_path, 'w') as f:
-                json.dump({}, f)
     
     def load_prefixes(self):
         """Load server prefixes from the database"""
@@ -146,7 +134,7 @@ class TriggerBot(commands.Bot):
         # Set bot activity
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.listening, 
-            name=f"{self.default_prefix}help"
+            name=f"{self.default_prefix}triggers"
         ))
     
     async def on_guild_join(self, guild):
@@ -191,7 +179,6 @@ class TriggerBot(commands.Bot):
         # We need to check if this is a trigger after processing commands
         # to avoid executing bot commands inadvertently
         # This will be handled by the TriggerCommands cog's listener
-
 async def main():
     # Create bot instance
     bot = TriggerBot()
