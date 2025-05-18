@@ -37,16 +37,12 @@ class TriggerBot(commands.Bot):
         self.config = self.load_config()
         self.default_prefix = self.config.get('prefix', '!')
         
-        # Properly handle owner_id - fixed parsing logic here
-        self.owner_id = None
-        owner_id_config = self.config.get('owner_id')
-        
-        if isinstance(owner_id_config, list) and len(owner_id_config) > 0:
-            self.owner_id = int(owner_id_config[0])
-        elif isinstance(owner_id_config, (str, int)):
-            self.owner_id = int(owner_id_config)
-        else:
+        # Properly handle owner_id with simpler direct approach
+        self.owner_id = self.parse_owner_id(self.config.get('owner_id'))
+        if self.owner_id is None:
             logger.warning("No valid owner_id found in config, some commands will be unavailable")
+        else:
+            logger.info(f"Owner ID set to: {self.owner_id}")
         
         self.prefixes: Dict[str, str] = {}
         self.db_manager = DatabaseManager()
@@ -55,7 +51,7 @@ class TriggerBot(commands.Bot):
             command_prefix=get_prefix,
             intents=intents,
             case_insensitive=True,
-            help_command=None  # We'll implement our own help command
+            help_command=None  # Custom help command in OwnerCommands cog
         )
         
         # Initialize database files if they don't exist
@@ -63,6 +59,20 @@ class TriggerBot(commands.Bot):
         
         # Load prefixes
         self.load_prefixes()
+    
+    def parse_owner_id(self, owner_id_config):
+        """Parse owner ID from config with better error handling"""
+        try:
+            if isinstance(owner_id_config, list) and len(owner_id_config) > 0:
+                return int(owner_id_config[0])
+            elif isinstance(owner_id_config, (int, str)):
+                return int(owner_id_config)
+            else:
+                logger.error(f"Invalid owner_id format: {owner_id_config}")
+                return None
+        except (ValueError, TypeError) as e:
+            logger.error(f"Error parsing owner_id: {e}")
+            return None
     
     def load_config(self) -> Dict[str, Any]:
         """Load the bot configuration"""
@@ -133,7 +143,7 @@ class TriggerBot(commands.Bot):
         # Set bot activity
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.listening, 
-            name=f"{self.default_prefix}bothelp"  # Updated to match the renamed help command
+            name=f"{self.default_prefix}bothelp"
         ))
     
     async def on_guild_join(self, guild):
