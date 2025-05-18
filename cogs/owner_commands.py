@@ -53,7 +53,7 @@ class OwnerCommands(commands.Cog):
         # Check if user has manage server permissions
         return ctx.author.guild_permissions.manage_guild
     
-    @commands.command(name="bothelp")  # Changed from "help" to "bothelp" to avoid conflicts
+    @commands.command(name="bothelp")
     async def help_command(self, ctx, command: Optional[str] = None):
         """Show help for all commands or a specific command"""
         if command:
@@ -218,7 +218,7 @@ class OwnerCommands(commands.Cog):
         )
         
         server_page.add_field(
-            name=f"{prefix}bothelp",  # Updated here as well
+            name=f"{prefix}bothelp",
             value="Show this help message",
             inline=False
         )
@@ -305,7 +305,12 @@ class OwnerCommands(commands.Cog):
             await interaction.response.send_message("You can't change the prefix in DMs.", ephemeral=True)
 
 async def setup(bot):
+    # First, disable the default help command
+    bot.help_command = None
+    
+    # Then add our custom cog
     await bot.add_cog(OwnerCommands(bot))
+    
     # Register app commands
     owner_cog = bot.get_cog("OwnerCommands")
     
