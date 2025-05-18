@@ -305,13 +305,14 @@ class OwnerCommands(commands.Cog):
             await interaction.response.send_message("You can't change the prefix in DMs.", ephemeral=True)
 
 async def setup(bot):
-    # Add our custom cog
     await bot.add_cog(OwnerCommands(bot))
+    # Register app commands
+    owner_cog = bot.get_cog("OwnerCommands")
     
-    # Register slash commands with the tree
-    try:
-        # Sync app commands to update slash commands
-        await bot.tree.sync()
-        logger.info("Successfully synced application commands")
-    except Exception as e:
-        logger.error(f"Failed to sync application commands: {e}")
+    # Add help command
+    bot.tree.add_command(owner_cog.slash_help_command)
+    
+    # Add serverprefix command
+    bot.tree.add_command(owner_cog.slash_server_prefix)
+    
+    await bot.tree.sync()
