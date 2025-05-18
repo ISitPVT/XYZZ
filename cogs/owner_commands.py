@@ -53,7 +53,7 @@ class OwnerCommands(commands.Cog):
         # Check if user has manage server permissions
         return ctx.author.guild_permissions.manage_guild
     
-    @commands.command(name="help")
+    @commands.command(name="bothelp")  # Changed from "help" to "bothelp" to avoid conflicts
     async def help_command(self, ctx, command: Optional[str] = None):
         """Show help for all commands or a specific command"""
         if command:
@@ -150,7 +150,7 @@ class OwnerCommands(commands.Cog):
             • **Trigger Commands** - Create and manage triggers
             • **Server Commands** - Manage server-specific settings
             
-            Use `{prefix}help <command>` for more details on a command.
+            Use `{prefix}bothelp <command>` for more details on a command.
             """,
             inline=False
         )
@@ -218,7 +218,7 @@ class OwnerCommands(commands.Cog):
         )
         
         server_page.add_field(
-            name=f"{prefix}help",
+            name=f"{prefix}bothelp",  # Updated here as well
             value="Show this help message",
             inline=False
         )
