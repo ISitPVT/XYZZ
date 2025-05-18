@@ -37,7 +37,7 @@ class TriggerBot(commands.Bot):
         self.config = self.load_config()
         self.default_prefix = self.config.get('prefix', '!')
         
-        # Properly handle owner_id with simpler direct approach
+        # Fix owner_id parsing - handle it as a simple integer
         self.owner_id = self.parse_owner_id(self.config.get('owner_id'))
         if self.owner_id is None:
             logger.warning("No valid owner_id found in config, some commands will be unavailable")
@@ -51,7 +51,7 @@ class TriggerBot(commands.Bot):
             command_prefix=get_prefix,
             intents=intents,
             case_insensitive=True,
-            help_command=None  # Custom help command in OwnerCommands cog
+            help_command=None  # Disable the default help command
         )
         
         # Initialize database files if they don't exist
@@ -61,12 +61,15 @@ class TriggerBot(commands.Bot):
         self.load_prefixes()
     
     def parse_owner_id(self, owner_id_config):
-        """Parse owner ID from config with better error handling"""
+        """Parse owner ID from config with proper error handling"""
         try:
-            if isinstance(owner_id_config, list) and len(owner_id_config) > 0:
-                return int(owner_id_config[0])
-            elif isinstance(owner_id_config, (int, str)):
+            # Handle different possible formats
+            if isinstance(owner_id_config, int):
+                return owner_id_config
+            elif isinstance(owner_id_config, str):
                 return int(owner_id_config)
+            elif isinstance(owner_id_config, list) and len(owner_id_config) > 0:
+                return int(owner_id_config[0])
             else:
                 logger.error(f"Invalid owner_id format: {owner_id_config}")
                 return None
@@ -143,7 +146,7 @@ class TriggerBot(commands.Bot):
         # Set bot activity
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.listening, 
-            name=f"{self.default_prefix}bothelp"
+            name=f"{self.default_prefix}help"
         ))
     
     async def on_guild_join(self, guild):
