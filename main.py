@@ -36,13 +36,17 @@ class TriggerBot(commands.Bot):
     def __init__(self):
         self.config = self.load_config()
         self.default_prefix = self.config.get('prefix', '!')
-        self.owner_id = self.config.get('owner_id')
         
-        # Handle list of owner IDs if provided as list
-        if isinstance(self.owner_id, list) and len(self.owner_id) > 0:
-            self.owner_id = int(self.owner_id[0])
-        elif isinstance(self.owner_id, str):
-            self.owner_id = int(self.owner_id)
+        # Properly handle owner_id - fixed parsing logic here
+        self.owner_id = None
+        owner_id_config = self.config.get('owner_id')
+        
+        if isinstance(owner_id_config, list) and len(owner_id_config) > 0:
+            self.owner_id = int(owner_id_config[0])
+        elif isinstance(owner_id_config, (str, int)):
+            self.owner_id = int(owner_id_config)
+        else:
+            logger.warning("No valid owner_id found in config, some commands will be unavailable")
         
         self.prefixes: Dict[str, str] = {}
         self.db_manager = DatabaseManager()
@@ -81,6 +85,18 @@ class TriggerBot(commands.Bot):
         """Initialize necessary data files and directories"""
         # Make sure directories exist
         utils.check_directories()
+        
+        # Ensure prefixes.json has valid content
+        prefix_path = 'data/prefixes.json'
+        if not os.path.exists(prefix_path) or os.path.getsize(prefix_path) == 0:
+            with open(prefix_path, 'w') as f:
+                json.dump({}, f)
+        
+        # Ensure triggers.json has valid content
+        trigger_path = 'data/triggers.json'
+        if not os.path.exists(trigger_path) or os.path.getsize(trigger_path) == 0:
+            with open(trigger_path, 'w') as f:
+                json.dump({}, f)
     
     def load_prefixes(self):
         """Load server prefixes from the database"""
@@ -117,7 +133,7 @@ class TriggerBot(commands.Bot):
         # Set bot activity
         await self.change_presence(activity=discord.Activity(
             type=discord.ActivityType.listening, 
-            name=f"{self.default_prefix}help"
+            name=f"{self.default_prefix}bothelp"  # Updated to match the renamed help command
         ))
     
     async def on_guild_join(self, guild):
@@ -162,6 +178,7 @@ class TriggerBot(commands.Bot):
         # We need to check if this is a trigger after processing commands
         # to avoid executing bot commands inadvertently
         # This will be handled by the TriggerCommands cog's listener
+
 async def main():
     # Create bot instance
     bot = TriggerBot()
