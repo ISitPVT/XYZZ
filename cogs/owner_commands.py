@@ -53,7 +53,7 @@ class OwnerCommands(commands.Cog):
         # Check if user has manage server permissions
         return ctx.author.guild_permissions.manage_guild
     
-    @commands.command(name="bothelp")
+    @commands.command(name="help")
     async def help_command(self, ctx, command: Optional[str] = None):
         """Show help for all commands or a specific command"""
         if command:
@@ -150,7 +150,7 @@ class OwnerCommands(commands.Cog):
             • **Trigger Commands** - Create and manage triggers
             • **Server Commands** - Manage server-specific settings
             
-            Use `{prefix}bothelp <command>` for more details on a command.
+            Use `{prefix}help <command>` for more details on a command.
             """,
             inline=False
         )
@@ -218,7 +218,7 @@ class OwnerCommands(commands.Cog):
         )
         
         server_page.add_field(
-            name=f"{prefix}bothelp",
+            name=f"{prefix}help",
             value="Show this help message",
             inline=False
         )
@@ -305,19 +305,13 @@ class OwnerCommands(commands.Cog):
             await interaction.response.send_message("You can't change the prefix in DMs.", ephemeral=True)
 
 async def setup(bot):
-    # First, disable the default help command
-    bot.help_command = None
-    
-    # Then add our custom cog
+    # Add our custom cog
     await bot.add_cog(OwnerCommands(bot))
     
-    # Register app commands
-    owner_cog = bot.get_cog("OwnerCommands")
-    
-    # Add help command
-    bot.tree.add_command(owner_cog.slash_help_command)
-    
-    # Add serverprefix command
-    bot.tree.add_command(owner_cog.slash_server_prefix)
-    
-    await bot.tree.sync()
+    # Register slash commands with the tree
+    try:
+        # Sync app commands to update slash commands
+        await bot.tree.sync()
+        logger.info("Successfully synced application commands")
+    except Exception as e:
+        logger.error(f"Failed to sync application commands: {e}")
